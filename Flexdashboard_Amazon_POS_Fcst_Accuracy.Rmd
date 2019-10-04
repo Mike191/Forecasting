@@ -1,0 +1,880 @@
+---
+title: "Amazon's POS Forecast Accuracy"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    theme: spacelab
+
+---
+
+
+```{r setup, include=FALSE}
+#block of code to pull in and calculate date
+
+#loading libraries
+library(tidyverse)
+library(lubridate)
+library(ggthemes)
+library(flexdashboard)
+library(readxl)
+library(collapsibleTree)
+
+#loading data file
+amz <- readRDS('S://Fiskars Americas/Operations/Shared/SOP/Forecasting/Amazon Data/Cleaned/Weekly Forecast/Amazon US Weekly Forecast With UPC_All_Weeks.RDS')
+
+#filtering on the second week of every month - the day (Monday) must be between 9 and 15
+amz <- amz %>%
+  filter(day(POS_Fcst_Version_Date) >=9 & day(POS_Fcst_Version_Date) <= 15)
+
+#creating variables to filter forecast to only the last 12 months
+last_month <- as.Date(cut(today(), 'month')) - months(1)
+last_year <- last_month - months(11)
+
+#calculating the lag and filtering on the last 12 months
+amz <- amz %>%
+  mutate(Fcst_Date = make_date(Year, Month_Num, 1),
+         Lag = month(as.period(interval(POS_Fcst_Version_Date, Fcst_Date)))+1) %>%
+  filter(Lag != 5) %>%
+  filter(Fcst_Date >= last_year & Fcst_Date <= last_month) %>%
+  select(Fcst_Date, ASIN:Lag)
+
+#loading data to add SKU and our leadtime
+lt <- read.csv('S://Fiskars Americas/Operations/Shared/SOP/Forecasting/R/RData/Amazon_ASINS_Leadtimes.csv', header = TRUE, stringsAsFactors = FALSE)
+
+#adding SKU and our leadtime
+amz <- amz %>%
+  left_join(lt)
+
+#creating a column to say if something is our leadtime or not
+amz <- amz %>%
+  mutate(Our_LT = if_else(Lag == Our_LT, 'TRUE', 'FALSE')) %>%
+  select(1:3, SKU, 4, Category, Sub_Category, 5:14)
+
+#loading data for actual POS to compare to forecast
+actuals <- readRDS('S://Fiskars Americas/Operations/Shared/SOP/Forecasting/Amazon Data/Cleaned/Sales Diagnostic Shipped/Amazon US Sales Diagnostic Shipped With UPC_All_Months.RDS')
+
+#filtering out unneeded columns and filtering on the last 12 months
+actuals <- actuals %>%
+  filter(Date >= last_year & Date <= last_month) %>%
+  mutate(Lookup = paste0(Date, ASIN)) %>%
+  select(Lookup, Shipped_Units)
+
+#joining data to bring in actuals
+amz <- amz %>%
+  mutate(Lookup = paste0(Fcst_Date, ASIN)) %>%
+  left_join(actuals, by = 'Lookup') %>%
+  select(-Lookup)
+
+#loading sku segmentation file to pull in ABC and Demand Categories
+seg <- read_excel('S://Fiskars Americas/Operations/Shared/Demand Analyst/fsk_segmentation_details.xlsx') %>%
+  filter(COMPANY == 'Fiskars', CUSTOMER == 'AMAZON COM_111057') %>%
+  select(ITEM_NUMBER, DEMAND_CAT_CU, ABC_REV_ITM_CU)
+
+#filtering to only Amazon
+# seg <- seg %>%
+#   filter(COMPANY == 'Fiskars', CUSTOMER == 'AMAZON COM_111057') %>%
+#   select(ITEM_NUMBER, DEMAND_CAT_CU, ABC_REV_ITM_CU)
+
+#joining amz with seg
+amz <- amz %>%
+  left_join(seg, by = c('SKU' = 'ITEM_NUMBER'))
+
+#removing unneeded variables
+rm(last_month)
+rm(last_year)
+rm(seg)
+
+#calculating absolute error
+amz <- amz %>%
+  mutate(Mean_ABS_Error = abs(Mean_Fcst - Shipped_Units),
+         P70_Below = if_else(P70_Fcst >= Shipped_Units, 1, 0),
+         P80_Below = if_else(P80_Fcst >= Shipped_Units, 1, 0),
+         P90_Below = if_else(P90_Fcst >= Shipped_Units, 1, 0))
+
+#getting rid of duplicates
+amz <- amz %>% distinct()
+
+#calculating Lag 1 accuracy
+lag1 <- amz %>%
+  filter(Lag == 1) %>%
+  group_by(Fcst_Date, Month, Year) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Num_SKUs = n(),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units),
+            P70_Below = sum(P70_Below, na.rm = TRUE)/Num_SKUs,
+            P80_Below = sum(P80_Below, na.rm = TRUE)/Num_SKUs,
+            P90_Below = sum(P90_Below, na.rm = TRUE)/Num_SKUs)
+
+#calculating Lag 2 accuracy
+lag2 <- amz %>%
+  filter(Lag == 2) %>%
+  group_by(Fcst_Date, Month, Year) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Num_SKUs = n(),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units),
+            P70_Below = sum(P70_Below, na.rm = TRUE)/Num_SKUs,
+            P80_Below = sum(P80_Below, na.rm = TRUE)/Num_SKUs,
+            P90_Below = sum(P90_Below, na.rm = TRUE)/Num_SKUs)
+
+#calculating Lag 3 accuracy
+lag3 <- amz %>%
+  filter(Lag == 3) %>%
+  group_by(Fcst_Date, Month, Year) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Num_SKUs = n(),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units),
+            P70_Below = sum(P70_Below, na.rm = TRUE)/Num_SKUs,
+            P80_Below = sum(P80_Below, na.rm = TRUE)/Num_SKUs,
+            P90_Below = sum(P90_Below, na.rm = TRUE)/Num_SKUs)
+
+#calculating our leadtime accuracy
+our_lt <- amz %>%
+  filter(Our_LT == 'TRUE') %>%
+  group_by(Fcst_Date, Month, Year) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Num_SKUs = n(),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units),
+            P70_Below = sum(P70_Below, na.rm = TRUE)/Num_SKUs,
+            P80_Below = sum(P80_Below, na.rm = TRUE)/Num_SKUs,
+            P90_Below = sum(P90_Below, na.rm = TRUE)/Num_SKUs)
+
+
+```
+
+
+
+Lag 1
+===============================================
+
+Row
+------------------------------------------------
+
+### Total 12 Month Accuracy
+
+```{r}
+total_acc_l1 <- round((1-(sum(lag1$Mean_ABS_Error)/sum(lag1$Shipped_Units, na.rm = T))) * 100,2)
+
+valueBox(paste(total_acc_l1, '%'), icon = 'fa-amazon')
+```
+
+### % of SKUs Below P70 Fcst
+
+```{r}
+per_tot_l1 <- amz %>%
+  filter(Lag == 1)
+
+p70_l1_per <- round(sum(per_tot_l1$P70_Below, na.rm = T)/length(per_tot_l1$SKU)*100,2)
+
+valueBox(paste(p70_l1_per, '%'), icon = 'fa-percent')
+
+```
+
+
+### % of SKUs Below P80 Fcst
+
+```{r}
+p80_l1_per <- round(sum(per_tot_l1$P80_Below, na.rm = T)/length(per_tot_l1$SKU)*100,2)
+
+valueBox(paste(p80_l1_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+### % of SKUs Below P90 Fcst
+
+```{r}
+p90_l1_per <- round(sum(per_tot_l1$P90_Below, na.rm = T)/length(per_tot_l1$SKU)*100,2)
+
+valueBox(paste(p90_l1_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+
+Row {data-heigth=775}
+-----------------------------------------------------------------------
+
+### POS Forecast Accuracy 1 Month Prior (last 12 months) {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#creating df for plotting our leadtime
+lag1_plot_df <- lag1 %>%
+  ungroup() %>%
+  select(Fcst_Date, Month, Year, 8:11) %>%
+  mutate(Month = month.abb[match(Month, month.name)]) %>%
+  gather(key = 'Type', value = 'Value', 4:7)
+
+#reordering the month factor so everything plots correctly
+lag1_plot_df$Month <- as.character(lag1_plot_df$Month)
+lag1_plot_df$Month <- factor(lag1_plot_df$Month, levels = unique(lag1_plot_df$Month))
+lag1_plot_df$Value <- lag1_plot_df$Value * 100
+
+#plotting
+ggplot(lag1_plot_df, aes(x = Month, y = Value, color = Type, group = Type)) +
+  geom_line() +
+  theme_light() +
+  theme(legend.title = element_blank(),
+        legend.position = 'bottom',
+        legend.text = element_text(size = 7),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  scale_y_continuous(breaks = pretty(lag1_plot_df$Value, n = 10))
+```
+
+
+
+### POS Accuracy 1 Month Prior (last 12 months) by ABC and Demand Category {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#calculating accuracy for demand categories and ABC for our leadtime
+dem_cat_lag1 <- amz %>%
+  filter(Lag == 1, !is.na(DEMAND_CAT_CU)) %>%
+  group_by(DEMAND_CAT_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  filter(DEMAND_CAT_CU != 'New', DEMAND_CAT_CU != 'Inactive') %>%
+  select(DEMAND_CAT_CU, Mean_Acc) 
+
+colnames(dem_cat_lag1)[1] <- 'Seg_Cat'
+
+#calculating for ABC
+abc_cat_lag1 <- amz %>%
+  filter(Lag == 1, !is.na(ABC_REV_ITM_CU)) %>%
+  group_by(ABC_REV_ITM_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  select(ABC_REV_ITM_CU, Mean_Acc) 
+
+colnames(abc_cat_lag1)[1] <- 'Seg_Cat'
+
+dem_cat_lag1 <- rbind(dem_cat_lag1, abc_cat_lag1) %>%
+  mutate(Mean_Acc = round((Mean_Acc * 100),2))
+
+#making Seg_Cat a factor
+dem_cat_lag1$Seg_Cat <- factor(dem_cat_lag1$Seg_Cat, levels = c('A', 'B', 'C', 'Smooth', 'Erratic', 'Intermittent', 'Lumpy'))
+
+#plotting accuracy of categories
+ggplot(dem_cat_lag1, aes(x = Seg_Cat, y = Mean_Acc)) +
+  geom_col(fill = 'steelblue') + 
+  theme_light() +
+  theme(panel.grid.major.x = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  geom_text(aes(label = Mean_Acc), vjust = 1.6, color = 'white')
+
+```
+
+
+Row {data-height=250}
+-----------------------------------------------------------------------
+
+### Notes
+
+This dashboard measures Amazon's POS forecast accuracy for the mean forecast and calculates the percentage of SKUs that came in below the P70, P80 and P90 forecasts for the past 12 months.  Since we forecast by month, I disaggregated their weekly forecast to a daily forecast and then aggregated it up to a monthly forecast cutting off incomplete months.  For measuring accuracy, I chose the forecast from the middle of the month to line up with when we do our forecasting. Lag 1 is their one-month ahead forecast (ex: their May forecast from the middle of April) so it's about a 2-3 week lag.  Lag 2 is two months ahead (~6 weeks) and Lag 3 is three months ahead (~10 weeks).  Our Leadtime is lagging each SKU by our leadtime and measuring accuracy that way.
+
+A few things to note:  
+
+  - Amazon forecasts weekly and we're aggregating it to measure it monthly so the accuracy isn't perfect.
+  - The P70/80/90 forecast means 70/80/90% of the actuals should come in under those forecasts for each SKU. I made an assumption that if that holds true, roughly 70/80/90% of the SKUs should come in under those forecasts each month.  So I'm counting the number of SKUs under those thresholds each month, rather than counting how many months come in under those thresholds for each SKU.
+  - This is measured off qty, not $.
+  - This is measured how we measure accuracy - rolling up abs error and dividing by orders.  Amazon may measure differently.
+  - The tree is calculated off our leadtime fcst, sorted with top SKUs at top & filtered to top 50 SKUs per sub-category.
+
+
+
+
+
+Lag 2
+===============================================
+
+Row
+------------------------------------------------
+
+
+### Total 12 Month Accuracy
+
+```{r}
+total_acc_l2 <- round((1-(sum(lag2$Mean_ABS_Error)/sum(lag2$Shipped_Units, na.rm = T))) * 100,2)
+
+valueBox(paste(total_acc_l2, '%'), icon = 'fa-amazon')
+```
+
+### % of SKUs Below P70 Fcst
+
+```{r}
+per_tot_l2 <- amz %>%
+  filter(Lag == 2)
+
+p70_l2_per <- round(sum(per_tot_l2$P70_Below, na.rm = T)/length(per_tot_l2$SKU)*100,2)
+
+valueBox(paste(p70_l2_per, '%'), icon = 'fa-percent')
+
+```
+
+
+### % of SKUs Below P80 Fcst
+
+```{r}
+p80_l2_per <- round(sum(per_tot_l2$P80_Below, na.rm = T)/length(per_tot_l2$SKU)*100,2)
+
+valueBox(paste(p80_l2_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+### % of SKUs Below P90 Fcst
+
+```{r}
+p90_l2_per <- round(sum(per_tot_l2$P90_Below, na.rm = T)/length(per_tot_l2$SKU)*100,2)
+
+valueBox(paste(p90_l2_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+
+Row {data-heigth=775}
+-----------------------------------------------------------------------
+
+### POS Forecast Accuracy 2 Months Prior (last 12 months) {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#creating df for plotting our leadtime
+lag2_plot_df <- lag2 %>%
+  ungroup() %>%
+  select(Fcst_Date, Month, Year, 8:11) %>%
+  mutate(Month = month.abb[match(Month, month.name)]) %>%
+  gather(key = 'Type', value = 'Value', 4:7)
+
+#reordering the month factor so everything plots correctly
+lag2_plot_df$Month <- as.character(lag2_plot_df$Month)
+lag2_plot_df$Month <- factor(lag2_plot_df$Month, levels = unique(lag2_plot_df$Month))
+lag2_plot_df$Value <- lag2_plot_df$Value * 100
+
+#plotting
+ggplot(lag2_plot_df, aes(x = Month, y = Value, color = Type, group = Type)) +
+  geom_line() +
+  theme_light() +
+  theme(legend.title = element_blank(),
+        legend.position = 'bottom',
+        legend.text = element_text(size = 7),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  scale_y_continuous(breaks = pretty(lag2_plot_df$Value, n = 10))
+```
+
+
+
+### POS Accuracy 2 Months Prior (last 12 months) by ABC and Demand Category {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#calculating accuracy for demand categories and ABC for our leadtime
+dem_cat_lag2 <- amz %>%
+  filter(Lag == 2, !is.na(DEMAND_CAT_CU)) %>%
+  group_by(DEMAND_CAT_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  filter(DEMAND_CAT_CU != 'New', DEMAND_CAT_CU != 'Inactive') %>%
+  select(DEMAND_CAT_CU, Mean_Acc) 
+
+colnames(dem_cat_lag2)[1] <- 'Seg_Cat'
+
+#calculating for ABC
+abc_cat_lag2 <- amz %>%
+  filter(Lag == 2, !is.na(ABC_REV_ITM_CU)) %>%
+  group_by(ABC_REV_ITM_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  select(ABC_REV_ITM_CU, Mean_Acc) 
+
+colnames(abc_cat_lag2)[1] <- 'Seg_Cat'
+
+dem_cat_lag2 <- rbind(dem_cat_lag2, abc_cat_lag2) %>%
+  mutate(Mean_Acc = round((Mean_Acc * 100),2))
+
+#making Seg_Cat a factor
+dem_cat_lag2$Seg_Cat <- factor(dem_cat_lag2$Seg_Cat, levels = c('A', 'B', 'C', 'Smooth', 'Erratic', 'Intermittent', 'Lumpy'))
+
+#plotting accuracy of categories
+ggplot(dem_cat_lag2, aes(x = Seg_Cat, y = Mean_Acc)) +
+  geom_col(fill = 'steelblue') + 
+  theme_light() +
+  theme(panel.grid.major.x = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  geom_text(aes(label = Mean_Acc), vjust = 1.6, color = 'white')
+
+```
+
+
+Row {data-height=250}
+-----------------------------------------------------------------------
+
+### Notes
+
+This dashboard measures Amazon's POS forecast accuracy for the mean forecast and calculates the percentage of SKUs that came in below the P70, P80 and P90 forecasts for the past 12 months.  Since we forecast by month, I disaggregated their weekly forecast to a daily forecast and then aggregated it up to a monthly forecast cutting off incomplete months.  For measuring accuracy, I chose the forecast from the middle of the month to line up with when we do our forecasting. Lag 1 is their one-month ahead forecast (ex: their May forecast from the middle of April) so it's about a 2-3 week lag.  Lag 2 is two months ahead (~6 weeks) and Lag 3 is three months ahead (~10 weeks).  Our Leadtime is lagging each SKU by our leadtime and measuring accuracy that way.
+
+A few things to note:  
+
+  - Amazon forecasts weekly and we're aggregating it to measure it monthly so the accuracy isn't perfect.
+  - The P70/80/90 forecast means 70/80/90% of the actuals should come in under those forecasts for each SKU. I made an assumption that if that holds true, roughly 70/80/90% of the SKUs should come in under those forecasts each month.  So I'm counting the number of SKUs under those thresholds each month, rather than counting how many months come in under those thresholds for each SKU.
+  - This is measured off qty, not $.
+  - This is measured how we measure accuracy - rolling up abs error and dividing by orders.  Amazon may measure differently.
+  - The tree is calculated off our leadtime fcst, sorted with top SKUs at top & filtered to top 50 SKUs per sub-category.
+
+
+
+
+
+
+
+
+
+Lag 3
+===============================================
+
+Row
+------------------------------------------------
+
+
+### Total 12 Month Accuracy
+
+```{r}
+total_acc_l3 <- round((1-(sum(lag3$Mean_ABS_Error)/sum(lag3$Shipped_Units, na.rm = T))) * 100,2)
+
+valueBox(paste(total_acc_l3, '%'), icon = 'fa-amazon')
+```
+
+### % of SKUs Below P70 Fcst
+
+```{r}
+per_tot_l3 <- amz %>%
+  filter(Lag == 3)
+
+p70_l3_per <- round(sum(per_tot_l3$P70_Below, na.rm = T)/length(per_tot_l3$SKU)*100,2)
+
+valueBox(paste(p70_l3_per, '%'), icon = 'fa-percent')
+
+```
+
+
+### % of SKUs Below P80 Fcst
+
+```{r}
+p80_l3_per <- round(sum(per_tot_l3$P80_Below, na.rm = T)/length(per_tot_l3$SKU)*100,2)
+
+valueBox(paste(p80_l3_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+### % of SKUs Below P90 Fcst
+
+```{r}
+p90_l3_per <- round(sum(per_tot_l3$P90_Below, na.rm = T)/length(per_tot_l3$SKU)*100,2)
+
+valueBox(paste(p90_l3_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+
+Row {data-heigth=775}
+-----------------------------------------------------------------------
+
+### POS Forecast Accuracy 3 Months Prior (last 12 months) {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#creating df for plotting our leadtime
+lag3_plot_df <- lag3 %>%
+  ungroup() %>%
+  select(Fcst_Date, Month, Year, 8:11) %>%
+  mutate(Month = month.abb[match(Month, month.name)]) %>%
+  gather(key = 'Type', value = 'Value', 4:7)
+
+#reordering the month factor so everything plots correctly
+lag3_plot_df$Month <- as.character(lag3_plot_df$Month)
+lag3_plot_df$Month <- factor(lag3_plot_df$Month, levels = unique(lag3_plot_df$Month))
+lag3_plot_df$Value <- lag3_plot_df$Value * 100
+
+#plotting
+ggplot(lag3_plot_df, aes(x = Month, y = Value, color = Type, group = Type)) +
+  geom_line() +
+  theme_light() +
+  theme(legend.title = element_blank(),
+        legend.position = 'bottom',
+        legend.text = element_text(size = 7),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  scale_y_continuous(breaks = pretty(lag3_plot_df$Value, n = 10))
+```
+
+
+
+### POS Accuracy 3 Months Prior (last 12 months) by ABC and Demand Category {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#calculating accuracy for demand categories and ABC for our leadtime
+dem_cat_lag3 <- amz %>%
+  filter(Lag == 3, !is.na(DEMAND_CAT_CU)) %>%
+  group_by(DEMAND_CAT_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  filter(DEMAND_CAT_CU != 'New', DEMAND_CAT_CU != 'Inactive') %>%
+  select(DEMAND_CAT_CU, Mean_Acc) 
+
+colnames(dem_cat_lag3)[1] <- 'Seg_Cat'
+
+#calculating for ABC
+abc_cat_lag3 <- amz %>%
+  filter(Lag == 3, !is.na(ABC_REV_ITM_CU)) %>%
+  group_by(ABC_REV_ITM_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  select(ABC_REV_ITM_CU, Mean_Acc) 
+
+colnames(abc_cat_lag3)[1] <- 'Seg_Cat'
+
+dem_cat_lag3 <- rbind(dem_cat_lag3, abc_cat_lag3) %>%
+  mutate(Mean_Acc = round((Mean_Acc * 100),2))
+
+#making Seg_Cat a factor
+dem_cat_lag3$Seg_Cat <- factor(dem_cat_lag3$Seg_Cat, levels = c('A', 'B', 'C', 'Smooth', 'Erratic', 'Intermittent', 'Lumpy'))
+
+#plotting accuracy of categories
+ggplot(dem_cat_lag3, aes(x = Seg_Cat, y = Mean_Acc)) +
+  geom_col(fill = 'steelblue') + 
+  theme_light() +
+  theme(panel.grid.major.x = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  geom_text(aes(label = Mean_Acc), vjust = 1.6, color = 'white')
+
+```
+
+
+Row {data-height=250}
+-----------------------------------------------------------------------
+
+### Notes
+
+This dashboard measures Amazon's POS forecast accuracy for the mean forecast and calculates the percentage of SKUs that came in below the P70, P80 and P90 forecasts for the past 12 months.  Since we forecast by month, I disaggregated their weekly forecast to a daily forecast and then aggregated it up to a monthly forecast cutting off incomplete months.  For measuring accuracy, I chose the forecast from the middle of the month to line up with when we do our forecasting. Lag 1 is their one-month ahead forecast (ex: their May forecast from the middle of April) so it's about a 2-3 week lag.  Lag 2 is two months ahead (~6 weeks) and Lag 3 is three months ahead (~10 weeks).  Our Leadtime is lagging each SKU by our leadtime and measuring accuracy that way.
+
+A few things to note:  
+
+  - Amazon forecasts weekly and we're aggregating it to measure it monthly so the accuracy isn't perfect.
+  - The P70/80/90 forecast means 70/80/90% of the actuals should come in under those forecasts for each SKU. I made an assumption that if that holds true, roughly 70/80/90% of the SKUs should come in under those forecasts each month.  So I'm counting the number of SKUs under those thresholds each month, rather than counting how many months come in under those thresholds for each SKU.
+  - This is measured off qty, not $.
+  - This is measured how we measure accuracy - rolling up abs error and dividing by orders.  Amazon may measure differently.
+  - The tree is calculated off our leadtime fcst, sorted with top SKUs at top & filtered to top 50 SKUs per sub-category.
+
+
+
+
+
+
+Our Leadtime
+===============================================
+
+
+
+Row
+------------------------------------------------
+
+
+### Total 12 Month Accuracy
+
+```{r}
+total_acc <- round((1-(sum(our_lt$Mean_ABS_Error)/sum(our_lt$Shipped_Units, na.rm = T))) * 100,2)
+
+valueBox(paste(total_acc, '%'), icon = 'fa-amazon')
+```
+
+### % of SKUs Below P70 Fcst
+
+```{r}
+per_tot_lt <- amz %>%
+  filter(Our_LT == 'TRUE')
+
+
+p70_lt_per <- round(sum(per_tot_lt$P70_Below, na.rm = T)/length(per_tot_lt$SKU)*100,2)
+
+valueBox(paste(p70_lt_per, '%'), icon = 'fa-percent')
+
+```
+
+
+### % of SKUs Below P80 Fcst
+
+```{r}
+p80_lt_per <- round(sum(per_tot_lt$P80_Below, na.rm = T)/length(per_tot_lt$SKU)*100,2)
+
+valueBox(paste(p80_lt_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+### % of SKUs Below P90 Fcst
+
+```{r}
+p90_lt_per <- round(sum(per_tot_lt$P90_Below, na.rm = T)/length(per_tot_lt$SKU)*100,2)
+
+valueBox(paste(p90_lt_per, '%'), icon = 'fa-percent')
+
+```
+
+
+
+
+Row {data-heigth=775}
+-----------------------------------------------------------------------
+
+### POS Forecast Accuracy at Our Leadtime (last 12 months) {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#creating df for plotting our leadtime
+lt_plot_df <- our_lt %>%
+  ungroup() %>%
+  select(Fcst_Date, Month, Year, 8:11) %>%
+  mutate(Month = month.abb[match(Month, month.name)]) %>%
+  gather(key = 'Type', value = 'Value', 4:7)
+
+#reordering the month factor so everything plots correctly
+lt_plot_df$Month <- as.character(lt_plot_df$Month)
+lt_plot_df$Month <- factor(lt_plot_df$Month, levels = unique(lt_plot_df$Month))
+lt_plot_df$Value <- lt_plot_df$Value * 100
+
+#plotting
+ggplot(lt_plot_df, aes(x = Month, y = Value, color = Type, group = Type)) +
+  geom_line() +
+  theme_light() +
+  theme(legend.title = element_blank(),
+        legend.position = 'bottom',
+        legend.text = element_text(size = 7),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  scale_y_continuous(breaks = pretty(lt_plot_df$Value, n = 10))
+```
+
+
+
+### POS Accuracy at Our Leadtime (last 12 months) by ABC and Demand Category {.no-padding}
+
+```{r fig.height=3, fig.width=7}
+#calculating accuracy for demand categories and ABC for our leadtime
+dem_cat_lt <- amz %>%
+  filter(Our_LT == 'TRUE', !is.na(DEMAND_CAT_CU)) %>%
+  group_by(DEMAND_CAT_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  filter(DEMAND_CAT_CU != 'New', DEMAND_CAT_CU != 'Inactive') %>%
+  select(DEMAND_CAT_CU, Mean_Acc) 
+
+colnames(dem_cat_lt)[1] <- 'Seg_Cat'
+
+#calculating for ABC
+abc_cat_lt <- amz %>%
+  filter(Our_LT == 'TRUE', !is.na(ABC_REV_ITM_CU)) %>%
+  group_by(ABC_REV_ITM_CU) %>%
+  summarise(Mean_Fcst = sum(Mean_Fcst, na.rm = TRUE),
+            Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = TRUE),
+            Shipped_Units = sum(Shipped_Units, na.rm = TRUE),
+            Mean_Acc = 1-(Mean_ABS_Error/Shipped_Units)) %>%
+  select(ABC_REV_ITM_CU, Mean_Acc) 
+
+colnames(abc_cat_lt)[1] <- 'Seg_Cat'
+
+dem_cat_lt <- rbind(dem_cat_lt, abc_cat_lt) %>%
+  mutate(Mean_Acc = round((Mean_Acc * 100),2))
+
+#making Seg_Cat a factor
+dem_cat_lt$Seg_Cat <- factor(dem_cat_lt$Seg_Cat, levels = c('A', 'B', 'C', 'Smooth', 'Erratic', 'Intermittent', 'Lumpy'))
+
+#plotting accuracy of categories
+ggplot(dem_cat_lt, aes(x = Seg_Cat, y = Mean_Acc)) +
+  geom_col(fill = 'steelblue') + 
+  theme_light() +
+  theme(panel.grid.major.x = element_blank()) +
+  labs(x = element_blank(),
+       y = 'Accuracy (%)') +
+  geom_text(aes(label = Mean_Acc), vjust = 1.6, color = 'white')
+
+```
+
+
+Row {data-height=250}
+-----------------------------------------------------------------------
+
+### Notes
+
+This dashboard measures Amazon's POS forecast accuracy for the mean forecast and calculates the percentage of SKUs that came in below the P70, P80 and P90 forecasts for the past 12 months.  Since we forecast by month, I disaggregated their weekly forecast to a daily forecast and then aggregated it up to a monthly forecast cutting off incomplete months.  For measuring accuracy, I chose the forecast from the middle of the month to line up with when we do our forecasting. Lag 1 is their one-month ahead forecast (ex: their May forecast from the middle of April) so it's about a 2-3 week lag.  Lag 2 is two months ahead (~6 weeks) and Lag 3 is three months ahead (~10 weeks).  Our Leadtime is lagging each SKU by our leadtime and measuring accuracy that way.
+
+A few things to note:  
+
+  - Amazon forecasts weekly and we're aggregating it to measure it monthly so the accuracy isn't perfect.
+  - The P70/80/90 forecast means 70/80/90% of the actuals should come in under those forecasts for each SKU. I made an assumption that if that holds true, roughly 70/80/90% of the SKUs should come in under those forecasts each month.  So I'm counting the number of SKUs under those thresholds each month, rather than counting how many months come in under those thresholds for each SKU.
+  - This is measured off qty, not $.
+  - This is measured how we measure accuracy - rolling up abs error and dividing by orders.  Amazon may measure differently.
+  - The tree is calculated off our leadtime fcst, sorted with top SKUs at top & filtered to top 50 SKUs per sub-category.
+
+
+
+
+
+Tree
+===============================================
+
+
+
+Row 
+------------------------------------------------
+
+
+
+```{r}
+#adding division to amz dataframe
+tree_df <- amz %>%
+  mutate(Div = if_else(Category == 'WATERING', 'WAT',
+                       if_else(Category %in% c('TOTAL SCISSORS', 'COOKING', 'CREATING', 'ALL OTHER SOC'), 'SOC', 'GOL'))) %>%
+  filter(Our_LT == 'TRUE') %>%
+  select(SKU, Product_Title, Div, Category, Sub_Category, DEMAND_CAT_CU, ABC_REV_ITM_CU, Mean_Fcst, Mean_ABS_Error, Shipped_Units)
+    
+#calculating division accuracy
+div_acc <- tree_df %>%
+  group_by(Div) %>%
+  summarise(Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = T),
+            Shipped_Units = sum(Shipped_Units, na.rm = T),
+            Acc = max(c(1-(Mean_ABS_Error/Shipped_Units),0))) %>%
+  select(-Mean_ABS_Error, -Shipped_Units) %>%
+  mutate(Acc = round(Acc * 100,2))
+
+#calculating Category accuracy
+cat_acc <- tree_df %>%
+  group_by(Category) %>%
+  summarise(Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = T),
+            Shipped_Units = sum(Shipped_Units, na.rm = T),
+            Acc = max(c(1-(Mean_ABS_Error/Shipped_Units),0))) %>%
+  select(-Mean_ABS_Error, -Shipped_Units) %>%
+  mutate(Acc = round(Acc * 100,2))
+
+
+#calculating Sub-ategory accuracy
+sub_acc <- tree_df %>%
+  group_by(Sub_Category) %>%
+  summarise(Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = T),
+            Shipped_Units = sum(Shipped_Units, na.rm = T),
+            Acc = max(c(1-(Mean_ABS_Error/Shipped_Units),0))) %>%
+  select(-Mean_ABS_Error, -Shipped_Units) %>%
+  mutate(Acc = round(Acc * 100,2))
+
+#calculating SKU accuracy
+sku_acc <- tree_df %>%
+  group_by(SKU) %>%
+  summarise(Mean_ABS_Error = sum(Mean_ABS_Error, na.rm = T),
+            Shipped_Units = sum(Shipped_Units, na.rm = T),
+            Acc = max(c(1-(Mean_ABS_Error/Shipped_Units),0))) %>%
+  select(-Mean_ABS_Error, -Shipped_Units) %>%
+  mutate(Acc = round(Acc * 100,2))
+
+
+#adding Division accuracy
+tree_df <- tree_df %>%
+  left_join(div_acc, by = 'Div') %>%
+  mutate(Div = paste0(Div, ' (', Acc, '% )')) %>%
+  select(-Acc)
+
+#adding Category accuracy
+tree_df <- tree_df %>%
+  left_join(cat_acc, by = 'Category') %>%
+  mutate(Category = paste0(Category, ' (', Acc, '% )')) %>%
+  select(-Acc)
+
+#adding Category accuracy
+tree_df <- tree_df %>%
+  left_join(sub_acc, by = 'Sub_Category') %>%
+  mutate(Sub_Category = paste0(Sub_Category, ' (', Acc, '% )')) %>%
+  select(-Acc)
+
+#adding SKU accuracy
+tree_df <- tree_df %>%
+  left_join(sku_acc, by = 'SKU') %>%
+  mutate(SKU = paste0(SKU, ' (', Acc, '% )')) %>%
+  select(-Acc) %>%
+  filter(!is.na(ABC_REV_ITM_CU)) %>%
+  mutate(abc_col = if_else(ABC_REV_ITM_CU == 'A', 'red',
+                           if_else(ABC_REV_ITM_CU == 'B', 'green', 'yellow')))
+
+#getting rid of duplicates
+tree_df <- tree_df %>% group_by(SKU) %>% sample_n(1)
+
+#creating df to filter on top 50 per sub category because tree was too big
+tree_filt <- tree_df %>%
+  ungroup() %>%
+  select(Sub_Category, SKU, Shipped_Units) %>%
+  arrange(Sub_Category, desc(Shipped_Units)) %>%
+  group_by(Sub_Category) %>%
+  top_n(50)
+
+#filtering on top 50 SKUs in each category
+tree_df <- tree_df %>%
+  arrange(Div, Category, Sub_Category, desc(Shipped_Units)) %>%
+  semi_join(tree_filt, by = 'SKU')
+
+# cols <- c('lightsteelblue',
+#           rep('lightsteelblue', length(unique(tree_df$Div))),
+#           rep('lightsteelblue', length(unique(tree_df$Category))),
+#           rep('lightsteelblue', length(unique(tree_df$Sub_Category))),
+#           rep('red', length(unique(tree_df$SKU))))
+          
+#tree tooltips
+#tree_df$tooltip <- paste0("Desc: ", tree_df$Product_Title)
+
+collapsibleTree(tree_df, 
+                hierarchy = c('Div', 'Category', 'Sub_Category', 'SKU'),
+                root = paste0('Amazon (', total_acc,'%)'),
+                width = 1700,
+                height = 800)
+
+```
+
+
+
+
