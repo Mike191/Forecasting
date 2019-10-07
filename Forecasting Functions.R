@@ -8,6 +8,7 @@ library(timetk)
 library(purrr)
 library(lubridate)
 library(zoo)
+library(readxl)
 
 
 
@@ -639,9 +640,15 @@ test_set_accuracy <- function(test_set, accuracy) {
   
   print(num_test_cols)
   
+  #browser()
+  
   #creating a best model column on the sku summary
-  sku_summary_data <- sku_summary_data %>%
-    mutate(Best_Model = colnames(sku_summary_data[,2:sum(num_test_cols,2)])[apply(sku_summary_data[, 2:sum(num_test_cols,2)], 1, which.max)])
+  sku_summary_data <- sku_summary_data%>%
+    mutate(Best_Model = colnames(sku_summary_data[,2:ncol(sku_summary_data)])[max.col(sku_summary_data[,2:ncol(sku_summary_data)])])
+  
+  #old code that caused error for Shaelyn
+  # sku_summary_data <- sku_summary_data %>%
+  #   mutate(Best_Model = colnames(sku_summary_data[,2:sum(num_test_cols,2)])[apply(sku_summary_data[, 2:sum(num_test_cols,2)], 1, which.max)])
   
   #assiging variables to the global environment
   assign('test_set_sku_details', sku_accuracy_data, .GlobalEnv)
